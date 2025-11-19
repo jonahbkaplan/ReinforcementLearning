@@ -3,8 +3,8 @@ class Agent:
     def __init__(self, env):
         self.env = env
 
-    def policy(self, state, greedy=False):
+    def predict(self, obs):
         pass
 
-    def learn(self, state_action_pairs, rewards, next_states) :
+    def learn(self) :
         pass

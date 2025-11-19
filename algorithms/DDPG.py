@@ -2,8 +2,8 @@ from algorithms.Agent import Agent
 
 
 class DDPG(Agent):
-    def policy(self, state, greedy=False):
+    def predict(self, obs):
         pass
 
-    def learn(self, state_action_pairs, rewards, next_states):
+    def learn(self) :
         pass
