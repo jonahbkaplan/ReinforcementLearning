@@ -1,7 +1,8 @@
 from algorithms.Agent import Agent
 
 
-class DQN(Agent):
+class RDQN(Agent):
+    # Rainbow DQN
     def predict(self, obs):
         pass
 
