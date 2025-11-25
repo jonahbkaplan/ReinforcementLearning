@@ -2,6 +2,9 @@ from algorithms.Agent import Agent
 
 
 class Reinforce(Agent):
+    # REINFORCE with a value-function estimator baseline
+    # Ruaidhri
+
     def __init__(self, env, episodes=10, discount=0.9, step_size=2e-13, flags=None):
         """
         REINFORCE with optional baseline function

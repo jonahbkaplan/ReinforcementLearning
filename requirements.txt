@@ -1,3 +1,4 @@
 highway_env
 stable-baselines3
 tensorboard
+moviepy
