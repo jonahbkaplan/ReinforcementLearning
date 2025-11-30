@@ -4,3 +4,4 @@ tensorboard
 moviepy
 torch
 matplotlib
+torch
