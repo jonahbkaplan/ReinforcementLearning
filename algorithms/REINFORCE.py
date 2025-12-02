@@ -23,6 +23,7 @@ class Reinforce(Agent):
         self.__episodes = episodes                                                                                  # Store the number of training episodes
         self.__discount = discount                                                                                  # Store the discount factor
         self.__step_size_theta = step_size_theta                                                                    # Store the parameter stepsize
+        self.__flags = flags                                                                                        # Store the state of the flags
         if flags is None:                                                                                           # If no flag argument used...
             self.__flags = [0]                                                                                      # Initialise a flag array with default flags
         elif flags[0]:                                                                                              # If the first flag is true...
@@ -51,7 +52,7 @@ class Reinforce(Agent):
     def __update_parameters(self, d, t=None):
         network = self.__value_network if t is None else self.__policy_network                  # Determine which network to update
         network.zero_grad()                                                                     # Zero the gradients before the backwards pass
-        network.backward()
+        network.backward()                                                                      # TODO fix
         with torch.no_grad():                                                                   # Don't track parameter updates (prevents auto grad errors)
             for param in network.parameters():                                                  # Loop over and update the network parameters
                 if t is None:                                                                   # If updating the value function network...
@@ -68,7 +69,7 @@ class Reinforce(Agent):
             action = torch.argmax(action)                           # Select index of highest value action (greedy) # TODO sample
         else:                                                       # If continuous action space...
             means, stds = self.__policy_network(tensor)             # Compute the mean and standard deviation of each type of action
-            action = means                                          # Select means of each type of action # TODO sample
+            action = means                                          # Select means of each type of action (greedy) # TODO sample
         return action                                               # Return the policy's chosen action
 
     def learn(self):
