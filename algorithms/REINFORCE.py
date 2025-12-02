@@ -77,8 +77,10 @@ class Reinforce(Agent):
         return action                                                                                                   # Return the policy's chosen action
 
     def learn(self):
+        rs = []
         for episode in range(self.__episodes):                                                                          # Train using self.__episodes number of trajectories
             trajectory = self.__generate_trajectory()                                                                   # Generate a trajectory following the agent's current policy
+            r=0
             for step_t in range(0, len(trajectory)):                                                                    # Loop t from t=0 to t=T where T is the number of timesteps in the trajectory
                 reward_to_go = 0                                                                                        # Initialise 'G' to 0
                 for step_k in range(step_t + 1, len(trajectory) + 1):                                                   # Loop through each SAR of the sub-trajectory
@@ -88,3 +90,7 @@ class Reinforce(Agent):
                     delta -= self.__estimate_value(trajectory[step_t][1])                                               # delta = G - v(s_t, w)
                     self.__update_parameters(trajectory[step_t][1], trajectory[step_t][0], delta, step_t)               # w = w + (alpha_w * (discount ** t) * delta * Dv(s_t,w))
                 self.__update_parameters(trajectory[step_t][1], trajectory[step_t][0], delta, step_t)                   # theta = theta + (alpha_theta * (discount ** t) * delta * Dlog(policy(A_t | S_t, Theta)))
+                r+=trajectory[step_t][2]
+            print("Episode: ", episode + 1, ", Reward: ", r)
+            rs += [r]
+        return rs
