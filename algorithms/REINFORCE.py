@@ -50,17 +50,13 @@ class Reinforce(Agent):
         return self.__value_network(tensor).detach()                # Return the estimated state value (detached from the NN)
 
     def __update_parameters(self, d, t=None):
-        network = self.__value_network if t is None else self.__policy_network                  # Determine which network to update
-        network.zero_grad()                                                                     # Zero the gradients before the backwards pass
-        network.backward()                                                                      # TODO fix
-        with torch.no_grad():                                                                   # Don't track parameter updates (prevents auto grad errors)
-            for param in network.parameters():                                                  # Loop over and update the network parameters
-                if t is None:                                                                   # If updating the value function network...
-                    update = self.__step_size_w * d * param.grad                                # w = w + (alpha_w * delta * Dv(s_t,w))
-                else:                                                                           # If updating the policy estimation network #TODO fix param.grad below to do log of prob of action
-                    #print(f"update = {self.__step_size_theta} * ({self.__discount} ** {t}) * {d} * {param.grad}")
-                    update = self.__step_size_theta * (self.__discount ** t) * d * param.grad   # theta = theta + (alpha_theta * (discount ** t) * delta * Dlog(policy(A_t | S_t, Theta)))
-                param += update                                                                 # Update the network parameters (gradient ascent)
+        network = self.__value_network if t is None else self.__policy_network              # Determine which network to update
+        network.zero_grad()                                                                 # Zero the gradients before the backwards pass
+        network.backward()                                                                  # TODO fix
+        with torch.no_grad():                                                               # Don't track parameter updates (prevents auto grad errors)
+            for param in network.parameters():                                              # Loop over and update the network parameters
+                #print(f"update = {self.__step_size_theta} * ({self.__discount} ** {t}) * {d} * {param.grad}")
+                param += self.__step_size_theta * (self.__discount ** t) * d * param.grad   # Update the network parameters (gradient ascent) # TODO fix param.grad Dlog(policy(A_t | S_t, Theta))), Dv(s_t,w)
 
     def predict(self, obs):
         tensor = torch.tensor(obs.flatten(), dtype=torch.float32)   # Convert the state into a float tensor
