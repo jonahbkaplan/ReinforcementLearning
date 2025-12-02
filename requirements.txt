@@ -1,6 +1,8 @@
 highway_env
+gymnasium
 stable-baselines3
 tensorboard
 moviepy
 torch
 matplotlib
+numpy

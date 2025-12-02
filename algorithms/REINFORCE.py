@@ -1,6 +1,8 @@
 from algorithms.Agent import Agent
 from algorithms.Network import StateValueNN as ValueNet
 from algorithms.Network import PolicyNN as PolicyNet
+from gymnasium import spaces
+import numpy as np
 import torch
 
 
@@ -20,13 +22,17 @@ class Reinforce(Agent):
         self.__episodes = episodes                  # Store the number of training episodes
         self.__discount = discount                  # Store the discount factor
         self.__step_size_theta = step_size_theta    # Store the parameter stepsize
-        state_size, hidden_size, output_size = 1, 1, 1 # TODO TEMP
         if flags is None:                           # If no flag argument used...
             self.__flags = [0]                      # Initialise a flag array with default flags
         elif flags[0]:                              # If the first flag is true...
             self.__step_size_w = step_size_w        # Store the baseline function stepsize
-            self.__value_network = ValueNet(state_size, hidden_size) # Store the value estimation neural network TODO sizes
-        self.__policy_network = PolicyNet(state_size, hidden_size, output_size) # Store the policy estimation neural network TODO sizes
+            self.__value_network = ValueNet(np.prod(env.observation_space.shape)) # Store the value estimation neural network
+        self.__discrete_actions = (type(env.action_space) == spaces.Discrete) # Determine the type of action space
+        if self.__discrete_actions: # If the action space is discrete...
+            self.__policy_network = PolicyNet(np.prod(env.observation_space.shape), env.action_space.n) # Store the policy estimation neural network
+        else: # If the action space is continuous...
+            # action = [] of size env.action_space.shape[0]
+            self.__policy_network = PolicyNet(np.prod(env.observation_space.shape), None) # TODO output size for continuous action space
 
     def __generate_trajectory(self):
         tau, done, truncated = [], False, False                             # Initialise empty trajectory and exit flags
@@ -55,7 +61,12 @@ class Reinforce(Agent):
 
     def predict(self, obs):
         tensor = torch.tensor(obs, dtype=torch.float32) # Convert the state into a float tensor
-        return self.__policy_network(tensor).detach()   # Return the action from the policy net (detached from the NN) # TODO ensure output is ready to be used as action
+        action = self.__policy_network(tensor).detach() # Compute the action from the policy net (detached from the NN)
+        if self.__discrete_actions: # If discrete action space...
+            action = torch.argmax(action) # Select index of highest value action
+        else: # If continuous action space...
+            action = [] # TODO ensure output is ready to be used as action
+        return action   # Return the policy's chosen action
 
     def learn(self):
         for episode in range(self.__episodes):                                                          # Train using self.__episodes number of trajectories

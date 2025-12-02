@@ -4,7 +4,8 @@ import torch.nn.functional as nnf
 
 class StateValueNN(nn.Module):
     # TODO experiment to find best value estimation structure
-    def __init__(self, input_size, hidden_size):
+    def __init__(self, input_size):
+        hidden_size = 100 #TODO
         super().__init__()
         self.__layer_in = nn.Linear(input_size, hidden_size)
         self.__layers = []
@@ -19,7 +20,8 @@ class StateValueNN(nn.Module):
 
 class PolicyNN(nn.Module):
     # TODO create proper architecture for policy estimation
-    def __init__(self, input_size, hidden_size, output_size):
+    def __init__(self, input_size, output_size):
+        hidden_size = 100 #TODO
         super().__init__()
         self.__layer_in = nn.Linear(input_size, hidden_size)
         self.__layers = []
