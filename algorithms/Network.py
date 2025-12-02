@@ -1,34 +1,41 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as nnf
+import numpy as np
 
 class StateValueNN(nn.Module):
-    # TODO experiment to find best value estimation structure
     def __init__(self, input_size):
-        hidden_size = 100 #TODO
         super().__init__()
-        self.__layer_in = nn.Linear(input_size, hidden_size)
-        self.__layers = []
-        self.__layer_out = nn.Linear(hidden_size, 1)
+        self.__layer_in = nn.Linear(input_size, 100)
+        self.__layer_out = nn.Linear(100, 1)
 
     def forward(self, state_tensor):
         x = nnf.relu(self.__layer_in(state_tensor))
-        for layer in self.__layers:
-            x = nnf.relu(layer(x))
-        return self.__layer_out(x).squeeze(-1) # Squeeze converts output to scalar (-1 prevents it collapsing the batch size)
+        return self.__layer_out(x)
 
 
-class PolicyNN(nn.Module):
-    # TODO create proper architecture for policy estimation
+class DiscretePolicyNN(nn.Module):
     def __init__(self, input_size, output_size):
-        hidden_size = 100 #TODO
         super().__init__()
-        self.__layer_in = nn.Linear(input_size, hidden_size)
-        self.__layers = []
-        self.__layer_out = nn.Linear(hidden_size, output_size)
+        self.__layer_in = nn.Linear(input_size, 100)
+        self.__layer_out = nn.Linear(100, output_size)
 
     def forward(self, state_tensor):
         x = nnf.relu(self.__layer_in(state_tensor))
-        for layer in self.__layers:
-            x = nnf.relu(layer(x))
-        return self.__layer_out(x).squeeze(-1) # Squeeze converts output to scalar (-1 prevents it collapsing the batch size)
+        action_values = self.__layer_out(x)
+        action_probabilities = nnf.softmax(action_values, dim=0)
+        return np.asarray(action_probabilities.detach())
+
+
+class ContinuousPolicyNN(nn.Module):
+    def __init__(self, input_size, output_size):
+        super().__init__()
+        self.__layer_in = nn.Linear(input_size, 100)
+        self.__layer_mean = nn.Linear(100, output_size)
+        self.__layer_std = nn.Linear(100, output_size)
+
+    def forward(self, state_tensor):
+        x = nnf.relu(self.__layer_in(state_tensor))
+        output_means = self.__layer_mean(x)
+        output_stds = self.__layer_std(x)
+        return np.asarray(output_means.detach()), np.asarray(output_stds.detach())
