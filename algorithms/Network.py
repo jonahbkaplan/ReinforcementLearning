@@ -24,7 +24,7 @@ class DiscretePolicyNN(nn.Module):
         x = nnf.relu(self.__layer_in(state_tensor))
         action_values = self.__layer_out(x)
         action_probabilities = nnf.softmax(action_values, dim=0)
-        return np.asarray(action_probabilities.detach())
+        return action_probabilities
 
 
 class ContinuousPolicyNN(nn.Module):
@@ -38,4 +38,4 @@ class ContinuousPolicyNN(nn.Module):
         x = nnf.relu(self.__layer_in(state_tensor))
         output_means = self.__layer_mean(x)
         output_stds = self.__layer_std(x)
-        return np.asarray(output_means.detach()), np.asarray(output_stds.detach())
+        return output_means, output_stds
