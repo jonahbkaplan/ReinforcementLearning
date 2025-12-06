@@ -24,11 +24,10 @@ class Actor(nn.Module):
         self.mu_layer = nn.Linear(512, 2) # Means for acceleration and steering
         self.log_std_layer = nn.Linear(512, 2) # Log variance for acceleration and steering
 
-    def forward(self, state, fusion=False):
+    def forward(self, state):
         """
         Params:
             state  (array of size [4, 128, 64]) -> the set of grayscale images to be fed into the CNN
-            fusion (bool) -> wheter we return the flattened output or the distribution params
         """
         # x shape: (Batch, 4, 128, 64)
         
@@ -45,43 +44,54 @@ class Actor(nn.Module):
         # Dense Layer
         x = F.relu(self.fc(x))
         
-
-        if fusion: 
-            # Get Distribution Parameters
-            mu = self.mu_layer(x)
-            log_std = self.log_std_layer(x)
-            # Clamp log_std to prevent numerical instability (Important for SAC)
-            log_std = torch.clamp(log_std, min=-20, max=2)
+        mu = self.mu_layer(x)
+        log_std = self.log_std_layer(x)
+        log_std = torch.clamp(log_std, min=-20, max=2)
         
-            return mu, log_std
-
-        else:
-
-            return x
+        return mu, log_std
 
 class Critic(nn.Module):
     """
     Actor network which ouputs value function from given state and action sampled from actor
     """
-    def __init__(self, state_dim, action_dim):
+    def __init__(self, action_dim):
         """
         Params:
-            state      (array of size [512]) -> the set of grayscale images to be fed into the CNN
             action_dim (array of size [2]) -> acceleration and sterring values
         """
         super(Critic, self).__init__()
-        # Critic takes State + Action as input
-        self.l1 = nn.Linear(state_dim + action_dim, 256)
+        self.conv1 = nn.Conv2d(4, 32, kernel_size=8, stride=4)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
+        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
+
+        # Note: We output 512 features from the image
+        self.fc = nn.Linear(3072, 512)
+
+        # Input: 512 (Image features) + 2 (Action vector) = 514
+        self.l1 = nn.Linear(512 + action_dim, 256)
         self.l2 = nn.Linear(256, 256)
-        self.q_value = nn.Linear(256, 1)
+        self.q_out = nn.Linear(256, 1) # Output: One Q-value
 
     def forward(self, state, action):
         """
         Params:
             state      (array of size [512]) -> the set of grayscale images to be fed into the CNN
-            action_dim (array of size [2]) -> acceleration and sterring values
+            action     (array of size [2]) -> acceleration and sterring values
         """
-        x = torch.cat([state, action], dim=1)
+        x = state / 255.0
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
+        x = x.view(x.size(0), -1)
+        x = F.relu(self.fc(x))
+
+        # 2. Fuse with Action
+        # Concatenate along dimension 1
+        x = torch.cat([x, action], dim=1) 
+        
+        # 3. Calculate Q-Value
         x = F.relu(self.l1(x))
         x = F.relu(self.l2(x))
-        return self.q_value(x)
+        q_value = self.q_out(x)
+        
+        return q_value
