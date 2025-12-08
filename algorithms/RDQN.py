@@ -10,13 +10,16 @@ from torchrl import modules
 from collections import deque
 import random
 
-class NStepReplayBuffer:
-    def __init__(self, capacity, n_step, gamma):
+class NStepPriorityReplayBuffer:
+    def __init__(self, capacity, n_step, gamma,beta=0.4,total_training_steps=1000):
         self.capacity = capacity
         self.buffer = deque(maxlen=capacity) # Use deque for main buffer too
         self.n_step = n_step
         self.gamma = gamma
+        self.beta = beta
+        self.beta_increment = (1.0 - self.beta) / total_training_steps
         self.n_queue = deque()
+        self.priorities = []
 
     def push(self, S, A, R, S_next, done):
         # Add transition to local queue
@@ -50,27 +53,53 @@ class NStepReplayBuffer:
                 break
         
         self.buffer.append((S0, A0, R_n, S_n, done_n))
+        max_priority = 1 if len(self.priorities) == 0 else max(self.priorities)
+        if len(self.priorities) < self.capacity:
+            self.priorities.append(max_priority)
+        else:
+            self.priorities.pop(0)
+            self.priorities.append(max_priority)
+
         self.n_queue.popleft()
-
+    
     def sample(self, batch_size):
-        return random.sample(self.buffer, batch_size)
+        indices = random.choices(
+            population=range(len(self.buffer)),
+            weights=self.priorities,
+            k=batch_size
+        )
 
+        transitions = [self.buffer[i] for i in indices]
+
+        full_p = np.array(self.priorities) / np.sum(self.priorities)
+
+        weights = (1.0 / (len(self.buffer) * full_p[indices])) ** self.beta
+        weights /= weights.max()
+
+        self.beta = min(1.0, self.beta + self.beta_increment)
+
+        return indices, weights, transitions
+        
     def __len__(self):
         return len(self.buffer)
+    
+    def update_priorities(self,idxs,priorites):
+        for idx,priority in zip(idxs,priorites):
+            self.priorities[idx] = priority
 
 
 class ActionValueNN(nn.Module):
     def __init__(self, state_dim, action_dim) -> None:
         super().__init__()
         self.backbone = nn.Sequential(
-            modules.NoisyLinear(state_dim, 64),
+            modules.NoisyLinear(state_dim, 128),
             nn.ReLU(),
-            modules.NoisyLinear(64, 64),
+            modules.NoisyLinear(128, 128),
             nn.ReLU(),
             
         )
-        self.value_head  = nn.Linear(64, 1)
-        self.advantage_head = nn.Linear(64, action_dim)
+        self.value_head  = nn.Linear(128, 1)
+        self.advantage_head = nn.Linear(128, action_dim)
 
     def forward(self, x):
         h = self.backbone(x)
@@ -81,13 +110,14 @@ class ActionValueNN(nn.Module):
 
 
 class RDQN(Agent):
-    def __init__(self, env, batch_size=64, gamma=0.99, C=1000, buffer_capacity=10000, n_step=3):
+    def __init__(self, env, batch_size=64, gamma=0.99, C=1000, buffer_capacity=10000, n_step=3,zeta=0.95):
         super().__init__(env)
         self.batch_size = batch_size 
         self.gamma = gamma
         self.n_step = n_step
         self.C = C
-        self.D = NStepReplayBuffer(buffer_capacity, self.n_step, self.gamma)
+        self.zeta = zeta
+        self.D = NStepPriorityReplayBuffer(buffer_capacity, self.n_step, self.gamma)
         
         self.state_dim = math.prod(env.unwrapped.observation_space.shape)
         self.action_dim = int(env.unwrapped.action_space.n) # Fixed attribute name
@@ -115,7 +145,7 @@ class RDQN(Agent):
         if len(self.D) < self.batch_size:
             return
 
-        batch = self.D.sample(self.batch_size)
+        idxs,weights,batch = self.D.sample(self.batch_size)
 
         states, actions, rewards, next_states, dones = zip(*batch)
         
@@ -135,7 +165,13 @@ class RDQN(Agent):
             q_next = self.q_2(next_states).gather(1, next_actions).squeeze(1)
             y_target = rewards + (self.gamma ** self.n_step) * (1 - dones) * q_next
 
-        loss = nn.functional.huber_loss(q_pred, y_target)
+        td_error = y_target - q_pred
+
+        new_priority = torch.pow(torch.abs(td_error) + 1e-6, self.zeta)
+        self.D.update_priorities(idxs, new_priority.tolist())
+
+        loss_per_sample = nn.functional.smooth_l1_loss(q_pred, y_target, reduction='none')
+        loss = (torch.tensor(weights) * loss_per_sample).mean()
 
         self.optimizer.zero_grad()
         loss.backward()
