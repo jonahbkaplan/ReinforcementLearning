@@ -10,17 +10,21 @@ import math
 class ActionValueNN(nn.Module):
     def __init__(self, state_dim, action_dim) -> None:
         super().__init__()
-        print(state_dim,action_dim)
-        self.net = nn.Sequential(
+        self.backbone = nn.Sequential(
             nn.Linear(state_dim, 128),
             nn.ReLU(),
             nn.Linear(128, 128),
             nn.ReLU(),
-            nn.Linear(128, action_dim)
+            
         )
+        self.value_head  = nn.Linear(128, 1)
+        self.advantage_head = nn.Linear(128, action_dim)
 
     def forward(self, x):
-        return self.net(x)
+        h = self.backbone(x)
+        V = self.value_head(h)
+        A = self.advantage_head(h)
+        return V + (A - A.mean(dim=1, keepdim=True))  
    
 
 class RDQN(Agent):
