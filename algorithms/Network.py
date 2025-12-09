@@ -32,10 +32,10 @@ class ContinuousPolicyNN(nn.Module):
         super().__init__()
         self.__layer_in = nn.Linear(input_size, 100)
         self.__layer_mean = nn.Linear(100, output_size)
-        self.__layer_std = nn.Linear(100, output_size)
+        self.__layer_log_std = nn.Linear(100, output_size)
 
     def forward(self, state_tensor):
         x = nnf.relu(self.__layer_in(state_tensor))
         output_means = self.__layer_mean(x)
-        output_stds = self.__layer_std(x)
-        return output_means, output_stds
+        output_log_stds = self.__layer_log_std(x)
+        return output_means, output_log_stds

@@ -8,7 +8,7 @@ import torch
 
 
 class Reinforce(Agent):
-    def __init__(self, env, episodes=100, discount=0.9, step_size_theta=2**-13, step_size_w=2e-5, flags=None):
+    def __init__(self, env, episodes=100, discount=0.9, step_size_theta=2**-9, step_size_w=2**-6, flags=None):
         """
         REINFORCE with optional baseline function.
 
@@ -80,7 +80,16 @@ class Reinforce(Agent):
 
                 # If using baseline, update r_t_g to delta and update w parameters
                 if self.__flags[0]:
-                    pass # TODO once without baseline stabilised
+                    # Get the state's value estimate
+                    value = self.__value_network(states_tensor[t])
+                    # Update reward-to-go: delta = G - v(s_t, w)
+                    r_t_g = r_t_g - value.detach()
+
+                    # Apply loss for gradient ascent and update parameters
+                    w_loss = - value * r_t_g
+                    self.__value_optimiser.zero_grad()
+                    w_loss.backward()
+                    self.__value_optimiser.step()
 
                 # Updates theta parameters
                 action_probabilities = self.__policy_network(states_tensor[t])
@@ -110,17 +119,6 @@ class Reinforce(Agent):
         # Return metrics for evaluation
         return undiscounted_rewards, average_rewards
 
-            #discounts_tensor = torch.tensor([self.__discount**t for t in range(timesteps)], dtype=torch.float32)        # Generate discounts tensor
-            #discounted_rewards = [discounts_tensor[:timesteps-t] * rewards_tensor[t:] for t in range(timesteps)]        # Apply discounts to returns
-            #r_t_g_tensor = torch.tensor([torch.sum(discounted_rewards[t]) for t in range(timesteps)], dtype=torch.float32) # Compute rewards to go
-            #if self.__flags[0]:                                                                                         # If including baseline...
-                #values = self.__value_network(states_tensor)                                                            # Collect V(s_t, w) for all t
-                #r_t_g_tensor = r_t_g_tensor - values.detach()                                                           # delta = G - v(s_t, w)
-                #w_loss = torch.sum(values * r_t_g_tensor)                                                               # Apply the weights: (alpha_w * (discount ** t) * delta) and sum the losses for all timesteps
-                #self.__value_optimiser.zero_grad()                                                                      # Clear the gradients
-                #w_loss.backward()                                                                                       # Compute gradients
-                #self.__value_optimiser.step()                                                                           # Gradient ascent: w += (alpha_w * (discount ** t) * delta * Dv(s_t,w))
-            #action_probabilities = self.__policy_network(states_tensor)                                                 # Compute the action probabilities for each state
 
 if __name__ == '__main__':
     import gymnasium as gym
@@ -131,6 +129,7 @@ if __name__ == '__main__':
     CONTINUOUS_ACTIONS = False
     TESTING = True
     EPISODES = 1000
+    BASELINE = True
     ###########
 
     if CONTINUOUS_ACTIONS and TESTING:
@@ -145,28 +144,11 @@ if __name__ == '__main__':
         print("invalid controls, aborting...")
         quit()
 
-    model = Reinforce(env, episodes=EPISODES, flags=[0])
+    model = Reinforce(env, episodes=EPISODES, flags=[BASELINE])
     rs, ars = model.learn(verbose=True)
 
-    #done = truncated = False
-    #obs, info = env.reset()
-    #while not (done or truncated):
-    #    action = model.predict(obs)
-    #    obs, reward, done, truncated, info = env.step(action)
-    #    env.render()
-
-    #plt.imshow(env.render())
-    #plt.show()
-    #env.close()
-
     plt.plot(rs)
-    plt.title("Undiscounted Total Rewards vs Episodes")
+    plt.title(f"Undiscounted Total Rewards vs Episodes ({"using" if BASELINE else "without"} baseline)")
     plt.xlabel("Episode")
     plt.ylabel("Undiscounted Total Reward")
-
-    #axes[1].plot(ars)
-    #axes[1].set_title("Average Reward vs Episodes")
-    #axes[1].set_xlabel("Episode")
-    #axes[1].set_ylabel("Average Reward")
-
     plt.show()
