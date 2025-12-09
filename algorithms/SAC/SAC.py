@@ -15,13 +15,12 @@ import numpy as np
 class SAC(Agent):
     # Soft Actor-Critic
     # Marcel  
-    def __init__(self, env, episodes = 100, discount = 0.9, alpha = 1.0, state_size = 4, lr=0.001):
+    def __init__(self, env, discount = 0.9, alpha = 1.0, state_size = 4, lr=0.001):
         """
         SAC Implemention.
 
         Params:
             env        (Object) -> the environment to act in
-            episodes   (int) -> number of episodes to run the training algorithm
             discount   (float) -> Discount factor (Gamma)
             alpha      (float) -> Controls log probabilites
             state_size (int) -> How many images passed into actor model
@@ -128,16 +127,15 @@ class SAC(Agent):
         Collect experiences to store in the replay buffer
         """
 
-        state, _ = self.env.reset() # Reset environment
-        self.isDone = False         # Initialise terminal status
-        while not self.isDone:      # Check if terminal
+        state, _ = self.env.reset()      # Reset environment
+        done = truncated = False         # Initialise terminal status
+        while not (done or truncated):   # Check if terminal
 
             action = self.choose_action_numpy(state)                           # Choose action
-            new_state, reward, done, _, _ = self.env.step(action)              # Step in environment
-            self.replayBuffer.append((state, action, reward, new_state, done)) # Add step to buffer
-            self.isDone = done                                                 # Update terminal status
-            print(self.isDone)
+            new_state, reward, done, truncated, _ = self.env.step(action)      # Step in environment
+            self.replayBuffer.append((state, action, reward, new_state, done)) # Add step to buffer                                     
             state = new_state                                                  # Update current state
+            self.env.render()                                              
         
         self.env.reset()
 
