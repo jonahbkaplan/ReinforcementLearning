@@ -23,7 +23,7 @@ class DiscretePolicyNN(nn.Module):
     def forward(self, state_tensor):
         x = nnf.relu(self.__layer_in(state_tensor))
         action_values = self.__layer_out(x)
-        action_probabilities = nnf.softmax(action_values, dim=0)
+        action_probabilities = nnf.softmax(action_values, dim=-1)
         return action_probabilities
 
 

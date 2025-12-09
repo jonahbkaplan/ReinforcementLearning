@@ -36,61 +36,57 @@ class Reinforce(Agent):
         self.__policy_optimiser = torch.optim.SGD(self.__policy_network.parameters(), lr=step_size_theta)               # Initialise policy estimation optimiser
 
     def __generate_trajectory(self):
-        tau, done, truncated = [], False, False                                                                         # Initialise empty trajectory and exit flags
-        obs, info = self.env.reset()                                                                                    # Get current state
+        states, actions, rewards, done, truncated = [], [], [], False, False                                            # Initialise empty trajectories and exit flags
+        state, info = self.env.reset()                                                                                  # Get current state
         while not (done or truncated):                                                                                  # Until a terminal state is reached
-            action = self.predict(obs)                                                                                  # Get next action based on agent's policy
-            new_obs, reward, done, truncated, info = self.env.step(action)                                              # Take action and observe environment
-            tau += [[action, obs, reward]]                                                                              # Add observation to trajectory
-            obs = new_obs                                                                                               # Update state
-        return tau                                                                                                      # Return trajectory
-
-    def __estimate_value(self, state):
-        tensor = torch.tensor(state.flatten(), dtype=torch.float32)                                                     # Convert the state into a float tensor
-        return self.__value_network(tensor).detach()                                                                    # Return the estimated state value (detached from the NN)
-
-    def __update_parameters(self, s, a, d, t):
-        # Adapted from https://epichka.com/blog/2023/pg-math-explained/
-        action_probabilities = self.__policy_network(torch.tensor(s.flatten(), dtype=torch.float32))                    # Compute the action probabilities
-        sampler = torch.distributions.Categorical(action_probabilities)                                                 # Convert the probabilities to a distribution
-        log_probabilities = -sampler.log_prob(a)                                                                        # Compute the log of the probability of the action taken
-        utility = log_probabilities * (self.__discount ** t) * d                                                        # Multiply by discounted return-to-go
-        self.__policy_optimiser.zero_grad()                                                                             # Clear the gradients
-        utility.backward()                                                                                              # Compute gradients
-        self.__policy_optimiser.step()                                                                                  # Gradient Ascent
-        #todo value net update
-        #todo continuous action space update
-        #todo tensor everything to do in parallel
+            action = self.predict(state)                                                                                # Get next action based on agent's policy
+            new_state, reward, done, truncated, info = self.env.step(action)                                            # Take action and observe environment
+            states.append(torch.tensor(state.flatten(), dtype=torch.float32))                                           # Add state to trajectory
+            actions.append(action)                                                                                      # Add action to trajectory
+            rewards.append(reward)                                                                                      # Add reward to trajectory
+            state = new_state                                                                                           # Update state
+        return torch.stack(states), torch.tensor(actions), torch.tensor(rewards)                                        # Return trajectory
 
     def predict(self, obs):
         tensor = torch.tensor(obs.flatten(), dtype=torch.float32)                                                       # Convert the state into a float tensor
         if self.__discrete_actions:                                                                                     # If discrete action space...
             action = self.__policy_network(tensor)                                                                      # Compute the action from the policy net
-            action = torch.distributions.Categorical(action).sample()                                                   # Select index of highest value action
+            action = torch.distributions.Categorical(action).sample().item()                                            # Select index of highest value action
         else:                                                                                                           # If continuous action space...
-            means, stds = self.__policy_network(tensor)                                                                 # Compute the mean and standard deviation of each type of action
-            action = []                                                                                                 # Initialise storage for action values
-            for action_type in range(len(means)):                                                                       # Loop over each type of action...
-                action_sample = torch.distributions.Normal(means, stds).sample()                                        # Take a sample from the estimated distribution
-                #todo scale to env space
-                action += [action_sample]                                                                               # Append sampled actions to action list
+            means, log_stds = self.__policy_network(tensor)                                                             # Compute the mean and log standard deviation of each type of action
+            stds = log_stds.exp()                                                                                       # Convert log stds to regular stds
+            dists = torch.distributions.Normal(means, stds)                                                             # Convert distribution parameters to distributions
+            dists = torch.distributions.Independent(dists, 1)                                      # Treat action dimensions jointly
+            action = dists.sample()                                                                                     # Take samples of each action dimension from the distributions
         return action                                                                                                   # Return the policy's chosen action
 
-    def learn(self):
-        rs = []
+    def learn(self, verbose=False):
+        undiscounted_rewards, average_rewards = [], []                                                                  # Initialise storage for evaluation metrics
         for episode in range(self.__episodes):                                                                          # Train using self.__episodes number of trajectories
-            trajectory = self.__generate_trajectory()                                                                   # Generate a trajectory following the agent's current policy
-            r=0
-            for step_t in range(0, len(trajectory)):                                                                    # Loop t from t=0 to t=T where T is the number of timesteps in the trajectory
-                reward_to_go = 0                                                                                        # Initialise 'G' to 0
-                for step_k in range(step_t + 1, len(trajectory) + 1):                                                   # Loop through each SAR of the sub-trajectory
-                    reward_to_go += (self.__discount ** (step_k-step_t-1)) * trajectory[step_k-1][2]                    # add to the running sum, G
-                delta = reward_to_go                                                                                    # Initialise new variable in case of baseline function
-                if self.__flags[0]:                                                                                     # "If including baseline..."
-                    delta -= self.__estimate_value(trajectory[step_t][1])                                               # delta = G - v(s_t, w)
-                    self.__update_parameters(trajectory[step_t][1], trajectory[step_t][0], delta, step_t)               # w = w + (alpha_w * (discount ** t) * delta * Dv(s_t,w))
-                self.__update_parameters(trajectory[step_t][1], trajectory[step_t][0], delta, step_t)                   # theta = theta + (alpha_theta * (discount ** t) * delta * Dlog(policy(A_t | S_t, Theta)))
-                r+=trajectory[step_t][2]
-            print("Episode: ", episode + 1, ", Reward: ", r)
-            rs += [r]
-        return rs
+            states_tensor, actions_tensor, rewards_tensor = self.__generate_trajectory()                                # Generate a trajectory following the agent's current policy
+            timesteps = rewards_tensor.size(dim=0)                                                                       # Store the length of this episode's trajectory
+            discounts_tensor = torch.tensor([self.__discount**t for t in range(timesteps)], dtype=torch.float32)        # Generate discounts tensor
+            discounted_rewards = [discounts_tensor[:timesteps-t] * rewards_tensor[t:] for t in range(timesteps)]        # Apply discounts to returns
+            r_t_g_tensor = torch.tensor([torch.sum(discounted_rewards[t]) for t in range(timesteps)], dtype=torch.float32) # Compute rewards to go
+            if self.__flags[0]:                                                                                         # If including baseline...
+                values = self.__value_network(states_tensor)                                                            # Collect V(s_t, w) for all t
+                r_t_g_tensor = r_t_g_tensor - values.detach()                                                           # delta = G - v(s_t, w)
+                w_loss = torch.sum(values * r_t_g_tensor)                                                               # Apply the weights: (alpha_w * (discount ** t) * delta) and sum the losses for all timesteps
+                self.__value_optimiser.zero_grad()                                                                      # Clear the gradients
+                w_loss.backward()                                                                                       # Compute gradients
+                self.__value_optimiser.step()                                                                           # Gradient ascent: w += (alpha_w * (discount ** t) * delta * Dv(s_t,w))
+            action_probabilities = self.__policy_network(states_tensor)                                                 # Compute the action probabilities for each state
+            if self.__discrete_actions:                                                                                 # If the environment uses a discrete action space...
+                distributions = torch.distributions.Categorical(action_probabilities)                                   # Create categorical distributions from action probabilities
+            else:                                                                                                       # If continuous action space...
+                distributions = None # TODO continuous action space
+            log_probabilities = - distributions.log_prob(actions_tensor)                                                # Compute the log of the probability of the actions taken (minus for gradient ascent)
+            theta_loss = torch.sum(log_probabilities * r_t_g_tensor)                                                    # Apply the weights: (alpha_theta * (discount ** t) * delta) and sum the losses for all timesteps
+            self.__policy_optimiser.zero_grad()                                                                         # Clear the gradients
+            theta_loss.backward()                                                                                       # Compute gradients
+            self.__policy_optimiser.step()                                                                              # Gradient ascent: theta += (alpha_theta * (discount ** t) * delta * Dlog(policy(A_t | S_t, Theta)))
+            undiscounted_rewards.append(torch.sum(rewards_tensor))                                                      # Append episode metrics
+            average_rewards.append(torch.sum(rewards_tensor)/timesteps)                                                 # Append episode metrics
+            if verbose:                                                                                                 # If verbose...
+                print(f"Episode: {episode + 1}, Reward: {undiscounted_rewards[episode]:.2f}")                           # Update user of progress
+        return undiscounted_rewards, average_rewards                                                                    # Return metrics for evaluation
