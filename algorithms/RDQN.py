@@ -12,7 +12,7 @@ from collections import deque
 import random
 
 class NStepPriorityReplayBuffer:
-    def __init__(self, capacity, n_step, gamma,beta=0.4,total_training_steps=1000):
+    def __init__(self, capacity, n_step, gamma,beta=0.4,total_training_steps=500):
         self.capacity = capacity
         self.buffer = deque(maxlen=capacity) 
         self.n_step = n_step
@@ -125,9 +125,52 @@ class DistributionalVisualNetwork(nn.Module):
         return weights.sum(dim=2) 
    
 
+class DistributionalVisualCNN(nn.Module):
+    def __init__(self, state_dim, action_dim, v_min, v_max,n_atoms):
+        super().__init__()
+        self.n_atoms = n_atoms
+        self.action_dim = action_dim
+        
+        self.register_buffer("support", torch.linspace(v_min, v_max, n_atoms))
+
+        self.backbone = nn.Sequential(
+            nn.Conv2d(4, 32, 8, stride=4),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, 4, stride=2),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, 3, stride=1),
+            nn.ReLU(),
+            nn.Flatten(),
+            modules.NoisyLinear(3072, 512,std_init=0.5),
+            nn.ReLU(),
+            modules.NoisyLinear(512, 512,std_init=0.5),
+            nn.ReLU(),
+        )
+
+        self.fc_q = modules.NoisyLinear(512, action_dim * n_atoms,std_init=0.5)
+
+    def forward(self, x):
+        batch_size = x.size(0)
+
+        x = self.backbone(x)
+        q_logits = self.fc_q(x)
+        
+        q_view = q_logits.view(batch_size, self.action_dim, self.n_atoms)
+        
+        q_probs = torch.softmax(q_view, dim=2)
+
+        q_log_probs = torch.log_softmax(q_view, dim=2)
+        
+        return q_probs, q_log_probs
+
+    def get_q_value(self, x):
+        q_probs, _ = self.forward(x)        
+        weights = q_probs * self.support
+        return weights.sum(dim=2) 
+
 
 class RDQN(Agent):
-    def __init__(self, env, batch_size=64, gamma=0.83, C=1000, buffer_capacity=10000, n_step=3, zeta=0.95):
+    def __init__(self, env, type='fully_connected', batch_size=64, gamma=0.9, C=1000, buffer_capacity=10000, n_step=3, zeta=0.95):
         super().__init__(env)
         self.batch_size = batch_size 
         self.gamma = gamma
@@ -136,7 +179,7 @@ class RDQN(Agent):
         self.zeta = zeta
         
         self.v_min = 0
-        self.v_max = 10.0
+        self.v_max = 8
         self.n_atoms = 51
         self.delta_z = (self.v_max - self.v_min) / (self.n_atoms - 1)
 
@@ -150,10 +193,17 @@ class RDQN(Agent):
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
+        if type == 'cnn':
+            network = DistributionalVisualCNN
+        elif type == 'fully_connected':
+            network = DistributionalVisualNetwork
+        else:
+            raise Exception("Invalid type")
+
         # Initialize Distributional Networks
-        self.q_1 = DistributionalVisualNetwork(self.state_dim, self.action_dim, 
+        self.q_1 = network(self.state_dim, self.action_dim, 
                                                self.v_min, self.v_max,self.n_atoms).to(self.device)
-        self.q_2 = DistributionalVisualNetwork(self.state_dim, self.action_dim, 
+        self.q_2 = network(self.state_dim, self.action_dim, 
                                                self.v_min, self.v_max,self.n_atoms).to(self.device)
         self.q_2.load_state_dict(self.q_1.state_dict())
         
@@ -185,9 +235,6 @@ class RDQN(Agent):
         dones       = torch.tensor(dones, dtype=torch.float32, device=self.device).unsqueeze(1) # [Batch, 1]
         weights     = torch.tensor(weights, dtype=torch.float32, device=self.device)
 
-        # ----------------------------------------------------
-        # 1. Calculate Target Distribution (The Projection Step)
-        # ----------------------------------------------------
         with torch.no_grad():
             next_action_idx = self.q_1.get_q_value(next_states).argmax(dim=1)
             p_next, _ = self.q_2(next_states) # [Batch, Actions, Atoms]
@@ -211,26 +258,18 @@ class RDQN(Agent):
             m.view(-1).index_add_(0, (u + offset).view(-1), (p_next_best * (b - l.float())).view(-1))
         
         
-        # Get Log probabilities from Online Network
         _, log_p_pred = self.q_1(states)
         
-        # Pick the Log-Probabilities for the actions we actually took
-        # shape: [Batch, Atoms]
         log_p_action = log_p_pred[range(self.batch_size), actions]
         
-        # Cross Entropy Loss: - Sum ( Target_Prob * Log_Predicted_Prob )
+        # Cross Entropy Loss: 
         loss_elementwise = -torch.sum(m * log_p_action, dim=1)
         
-        # Apply PER Weights
         loss = (weights * loss_elementwise).mean()
 
-        # Update Priorities (Use the Loss as a proxy for KL Divergence)
         new_priorities = loss_elementwise.detach().cpu().numpy() + 1e-6
         self.D.update_priorities(idxs, new_priorities)
 
-        # ----------------------------------------------------
-        # 3. Optimize
-        # ----------------------------------------------------
         self.optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.q_1.parameters(), 10.0)
