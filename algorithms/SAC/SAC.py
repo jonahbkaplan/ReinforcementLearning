@@ -10,12 +10,13 @@ import torch
 from torch.nn import functional as F
 import torch.optim as optim
 import numpy as np
+from collections import deque
 
 
 class SAC(Agent):
     # Soft Actor-Critic
     # Marcel  
-    def __init__(self, env, discount = 0.9, alpha = 1.0, state_size = 4, lr=0.001):
+    def __init__(self, env, discount = 0.95, alpha = 0.2, state_size = 4, lr=0.0003):
         """
         SAC Implemention.
 
@@ -28,24 +29,24 @@ class SAC(Agent):
         """
         super().__init__(env)
 
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.env = env
-        self.replayBuffer = []
-        self.policyParams = 0
+        self.replayBuffer = deque(maxlen=50000) # Cap size at 50000
         self.state_size = state_size
 
         #Define actor model
-        self.actor = Actor(self.state_size) # We are going for 4 images per iteration
+        self.actor = Actor(self.state_size).to(self.device) # We are going for 4 images per iteration
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=lr)
 
         # Define critics
-        self.critic_1 = Critic(action_dim = 2)
-        self.critic_2 = Critic(2)
+        self.critic_1 = Critic(action_dim = 2).to(self.device)
+        self.critic_2 = Critic(action_dim = 2).to(self.device)
         self.critic_1_optimizer = optim.Adam(self.critic_1.parameters(), lr=lr)
         self.critic_2_optimizer = optim.Adam(self.critic_2.parameters(), lr=lr)
         
         #Define target critics
-        self.target_critic_1 = Critic(2)
-        self.target_critic_2 = Critic(2)     
+        self.target_critic_1 = Critic(action_dim = 2).to(self.device)
+        self.target_critic_2 = Critic(action_dim = 2).to(self.device)    
         
         # Initialise target critics with same parameters as critics
         self.target_critic_1.load_state_dict(self.critic_1.state_dict())
@@ -53,10 +54,30 @@ class SAC(Agent):
           
         # Hyperparameters
         self.discount = discount
-        self.alpha = alpha
 
-    def predict(self, obs):
-        pass
+        # Decaying alpha
+        self.target_entropy = -float(env.action_space.shape[0]) # usually -2.0 for highway-env
+        self.log_alpha = torch.tensor([np.log(alpha)], requires_grad=True)
+        self.alpha_optimizer = optim.Adam([self.log_alpha], lr=lr)
+        self.alpha = self.log_alpha.exp().item() # Initial value
+
+    def predict(self, state):
+        """
+        Randomly sample an action as an equation from a state along with its log_prob
+        """
+
+        mu, log_std = self.actor(state)                                      # Actor model outputs 
+        std = torch.exp(log_std)                                             # Get normal variance
+        dist = torch.distributions.Normal(mu, std)                           # 2D normal distrubution
+        action_tensor = dist.rsample()                                       # Random sample from distribution
+        action_tensor_scaled = torch.tanh(action_tensor)                     # Rescale between -1 and 1 to match environment logic
+
+        # Jacobian correction
+        log_prob = dist.log_prob(action_tensor)
+        log_prob -= torch.log(1 - action_tensor_scaled.pow(2) + 1e-6)
+        log_prob = log_prob.sum(dim=1, keepdim=True)
+
+        return action_tensor_scaled, log_prob
 
     def learn(self, batch_size=256) :
         """
@@ -65,7 +86,7 @@ class SAC(Agent):
 
         # Check if we have enough data
         if len(self.replayBuffer) < batch_size:
-            return
+            return None, None, None
 
         # Choose a batch random experience from the replay buffer
         batch = random.sample(self.replayBuffer, batch_size)         
@@ -73,18 +94,18 @@ class SAC(Agent):
 
 
         # Updating the critic network
-        state = torch.FloatTensor(np.array(state_batch))
-        new_state = torch.FloatTensor(np.array(next_state_batch))
-        action = torch.FloatTensor(np.array(action_batch))
-        reward = torch.FloatTensor(np.array(reward_batch)).unsqueeze(1)
-        done = torch.FloatTensor(np.array(done_batch)).unsqueeze(1)
+        state = torch.FloatTensor(np.array(state_batch)).to(self.device)
+        new_state = torch.FloatTensor(np.array(next_state_batch)).to(self.device)
+        action = torch.FloatTensor(np.array(action_batch)).to(self.device)
+        reward = torch.FloatTensor(np.array(reward_batch)).unsqueeze(1).to(self.device)
+        done = torch.FloatTensor(np.array(done_batch)).unsqueeze(1).to(self.device)
 
         with torch.no_grad():
-            action_new, log_prob = self.choose_action(new_state)
+            action_new, log_prob = self.predict(new_state)
             Q1_action_value_new = self.target_critic_1(new_state, action_new)
             Q2_action_value_new = self.target_critic_2(new_state, action_new)
             min_action_value_new = torch.min(Q1_action_value_new, Q2_action_value_new)
-  
+
             TD_entropy = reward + self.discount * (1 - done) * (min_action_value_new - self.alpha * log_prob)
 
         current_q1 = self.critic_1(state, action)
@@ -102,7 +123,10 @@ class SAC(Agent):
 
         # Updating the actor network
 
-        new_action, log_prob = self.choose_action(state)
+        for p in self.critic_1.parameters(): p.requires_grad = False
+        for p in self.critic_2.parameters(): p.requires_grad = False
+
+        new_action, log_prob = self.predict(state)
 
         # Get Q-value of the NEW action
         q1_new = self.critic_1(state, new_action)
@@ -116,47 +140,38 @@ class SAC(Agent):
         actor_loss.backward()
         self.actor_optimizer.step()
 
+        for p in self.critic_1.parameters(): p.requires_grad = True
+        for p in self.critic_2.parameters(): p.requires_grad = True
+
+        # Alpha update
+        alpha_loss = -(self.log_alpha * (log_prob + self.target_entropy).detach()).mean()
+
+        self.alpha_optimizer.zero_grad()
+        alpha_loss.backward()
+        self.alpha_optimizer.step()
+        self.alpha = self.log_alpha.exp().item()
+
         # Updating the target network parameters
         self.soft_update(self.critic_1, self.target_critic_1)
         self.soft_update(self.critic_2, self.target_critic_2)
 
+        return critic_loss.item(), actor_loss.item(), self.alpha
+
 
     
-    def collect_data(self):
+    def collect_data(self, current_state):
         """
         Collect experiences to store in the replay buffer
         """
 
-        state, _ = self.env.reset()      # Reset environment
-        done = truncated = False         # Initialise terminal status
-        while not (done or truncated):   # Check if terminal
+        action = self.sample_action_numpy(current_state)                                 # Choose action
+        next_state, reward, done, truncated, _ = self.env.step(action)                   # Step in environment
+        real_done = done and not truncated                                               # Set up done condition
+        self.replayBuffer.append((current_state, action, reward, next_state, real_done)) # Add step to buffer                                                                                          
 
-            action = self.choose_action_numpy(state)                           # Choose action
-            new_state, reward, done, truncated, _ = self.env.step(action)      # Step in environment
-            self.replayBuffer.append((state, action, reward, new_state, done)) # Add step to buffer                                     
-            state = new_state                                                  # Update current state
-            self.env.render()                                              
+        return next_state, reward, done, truncated                                          
         
-        self.env.reset()
 
-    
-    def choose_action(self, state):
-        """
-        Randomly sample an action as an equation from a state along with its log_prob
-        """
-
-        mu, log_std = self.actor(state)                                      # Actor model outputs 
-        std = torch.exp(log_std)                                             # Get normal variance
-        dist = torch.distributions.Normal(mu, std)                           # 2D normal distrubution
-        action_tensor = dist.rsample()                                       # Random sample from distribution
-        action_tensor_scaled = torch.tanh(action_tensor)                     # Rescale between -1 and 1 to match environment logic
-
-        # Jacobian correction
-        log_prob = dist.log_prob(action_tensor)
-        log_prob -= torch.log(1 - action_tensor_scaled.pow(2) + 1e-6)
-        log_prob = log_prob.sum(dim=1, keepdim=True)
-
-        return action_tensor_scaled, log_prob
     
     def soft_update(self, local_model, target_model, rho=0.005):
         """
@@ -168,14 +183,110 @@ class SAC(Agent):
                 rho * local_param.data + (1.0 - rho) * target_param.data
             )
 
-    def choose_action_numpy(self, state):
+    def choose_action_deterministic(self, state):
         """
         Input: Numpy Array of shape (4, 128, 64)
         Output: Numpy Array of shape (2,)
         """
-        state_tensor = torch.FloatTensor(state).unsqueeze(0)
+        state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
         
         with torch.no_grad():
-            action_tensor, _ = self.choose_action(state_tensor)
+            mu, _ = self.actor(state_tensor)
+            action_tensor = torch.tanh(mu)
             
         return action_tensor.cpu().numpy()[0]
+    
+    def sample_action_numpy(self, state):
+        """
+        Input: Numpy Array (4, 128, 64)
+        Output: Numpy Array (2,)
+        """
+        state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+        
+        with torch.no_grad():
+            action_tensor, _ = self.predict(state_tensor)
+            
+        return action_tensor.cpu().numpy()[0]
+    
+
+    def train_loop(self, total_timesteps=10000, batch_size=256):
+        """
+        MAIN LOOP: Interleaves Data Collection and Training
+        """
+        rewards_history = []
+        cl_list = []
+        ac_list = []
+        alpha_decay = []
+        state, _ = self.env.reset()
+        episode_reward = 0
+        
+        for step in range(total_timesteps):
+
+            if (step % 1000) == 0:
+                print(f"Step-milestone: {step}")
+            
+            state, reward, done, truncated = self.collect_data(state)
+
+            episode_reward += reward
+
+            if len(self.replayBuffer) > batch_size:
+                cl, ac, alpha = self.learn(batch_size)
+
+                if cl is not None:
+                    cl_list.append(cl)
+                    ac_list.append(ac)
+                    alpha_decay.append(alpha)
+
+            if done or truncated:
+                print(f"Step {step}: Episode Reward: {episode_reward}")
+                rewards_history.append(episode_reward)
+                state, _ = self.env.reset()
+                episode_reward = 0
+
+        self.save_checkpoint("sac_final.pth")
+        self.save_actor_only("sac-actor.pth")
+
+        return rewards_history, cl_list, ac_list, alpha_decay
+    
+
+
+    def save_checkpoint(self, filename="sac_checkpoint.pth"):
+            print(f"Saving checkpoint to {filename}...")
+            checkpoint = {
+                'actor_state_dict': self.actor.state_dict(),
+                'critic_1_state_dict': self.critic_1.state_dict(),
+                'critic_2_state_dict': self.critic_2.state_dict(),
+                'target_critic_1_state_dict': self.target_critic_1.state_dict(),
+                'target_critic_2_state_dict': self.target_critic_2.state_dict(),
+                'actor_optimizer': self.actor_optimizer.state_dict(),
+                'critic_1_optimizer': self.critic_1_optimizer.state_dict(),
+                'critic_2_optimizer': self.critic_2_optimizer.state_dict(),
+                'log_alpha': self.log_alpha,
+                'alpha_optimizer': self.alpha_optimizer.state_dict(),
+            }
+            torch.save(checkpoint, filename)
+
+    def load_checkpoint(self, filename="sac_checkpoint.pth"):
+        print(f"Loading checkpoint from {filename}...")
+        checkpoint = torch.load(filename, map_location=self.device)
+        
+        self.actor.load_state_dict(checkpoint['actor_state_dict'])
+        self.critic_1.load_state_dict(checkpoint['critic_1_state_dict'])
+        self.critic_2.load_state_dict(checkpoint['critic_2_state_dict'])
+        self.target_critic_1.load_state_dict(checkpoint['target_critic_1_state_dict'])
+        self.target_critic_2.load_state_dict(checkpoint['target_critic_2_state_dict'])
+        
+        self.actor_optimizer.load_state_dict(checkpoint['actor_optimizer'])
+        self.critic_1_optimizer.load_state_dict(checkpoint['critic_1_optimizer'])
+        self.critic_2_optimizer.load_state_dict(checkpoint['critic_2_optimizer'])
+        
+        self.log_alpha = checkpoint['log_alpha']
+        self.alpha_optimizer.load_state_dict(checkpoint['alpha_optimizer'])
+        self.alpha = self.log_alpha.exp().item()
+
+    def save_actor_only(self, filename="sac_actor.pth"):
+            """Saves just the actor for lightweight inference/video recording"""
+            torch.save(self.actor.state_dict(), filename)
+        
+    def load_actor_only(self, filename="sac_actor.pth"):
+        self.actor.load_state_dict(torch.load(filename, map_location=self.device))
