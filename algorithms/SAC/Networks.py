@@ -6,7 +6,7 @@ class Actor(nn.Module):
     """
     Actor network which ouputs means and standard deviations for action probability distributions
     """
-    def __init__(self, state_size):
+    def __init__(self, state_size = 4):
         """
         Params:
             state_size (int) -> number of frames we are using per iteration (default 4)
@@ -21,29 +21,35 @@ class Actor(nn.Module):
         #Linear condense
         self.fc = nn.Linear(3072, 512)
 
-        self.mu_layer = nn.Linear(512, 2) # Means for acceleration and steering
+        self.mu_layer = nn.Linear(512, 2)      # Means for acceleration and steering
         self.log_std_layer = nn.Linear(512, 2) # Log variance for acceleration and steering
+
+        # Near zero weight init to avoid running into wall early
+        torch.nn.init.xavier_uniform_(self.mu_layer.weight)
+        self.mu_layer.weight.data.mul_(0.001) 
+        self.mu_layer.bias.data.fill_(0.0)
 
     def forward(self, state):
         """
         Params:
             state  (array of size [4, 128, 64]) -> the set of grayscale images to be fed into the CNN
         """
-        # x shape: (Batch, 4, 128, 64)
         
+        # 1. Normalise 
         x = state / 255.0
 
-        # Convolutions
+        # 2. Convolutions
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         x = F.relu(self.conv3(x))
         
-        # Flatten
+        # 3. Flatten
         x = x.view(x.size(0), -1)
         
-        # Dense Layer
+        # 4. Dense Layer
         x = F.relu(self.fc(x))
         
+        # 5. Obtain mean and log variance
         mu = self.mu_layer(x)
         log_std = self.log_std_layer(x)
         log_std = torch.clamp(log_std, min=-20, max=2)
@@ -60,14 +66,16 @@ class Critic(nn.Module):
             action_dim (array of size [2]) -> acceleration and sterring values
         """
         super(Critic, self).__init__()
+
+        # Same as actor network
         self.conv1 = nn.Conv2d(4, 32, kernel_size=8, stride=4)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
         self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
 
-        # Note: We output 512 features from the image
+        # Same linear condense as the actor
         self.fc = nn.Linear(3072, 512)
 
-        # Input: 512 (Image features) + 2 (Action vector) = 514
+        # Input: 512 (Image features) + 2 (Action vector)
         self.l1 = nn.Linear(512 + action_dim, 256)
         self.l2 = nn.Linear(256, 256)
         self.q_out = nn.Linear(256, 1) # Output: One Q-value
@@ -79,6 +87,8 @@ class Critic(nn.Module):
             action     (array of size [2]) -> acceleration and sterring values
         """
         x = state / 255.0
+
+        # 1. Equivalent to passing through actor but with new weights
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         x = F.relu(self.conv3(x))
@@ -86,7 +96,6 @@ class Critic(nn.Module):
         x = F.relu(self.fc(x))
 
         # 2. Fuse with Action
-        # Concatenate along dimension 1
         x = torch.cat([x, action], dim=1) 
         
         # 3. Calculate Q-Value

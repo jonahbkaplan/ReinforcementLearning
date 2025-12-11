@@ -34,17 +34,17 @@ class SAC(Agent):
         self.replayBuffer = deque(maxlen=50000) # Cap size at 50000
         self.state_size = state_size
 
-        #Define actor model
-        self.actor = Actor(self.state_size).to(self.device) # We are going for 4 images per iteration
+        #Define actor model and optimiser
+        self.actor = Actor(self.state_size).to(self.device) # 4 images per iteration
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=lr)
 
-        # Define critics
+        # Define critics and optimisers
         self.critic_1 = Critic(action_dim = 2).to(self.device)
         self.critic_2 = Critic(action_dim = 2).to(self.device)
         self.critic_1_optimizer = optim.Adam(self.critic_1.parameters(), lr=lr)
         self.critic_2_optimizer = optim.Adam(self.critic_2.parameters(), lr=lr)
         
-        #Define target critics
+        #Define target critics 
         self.target_critic_1 = Critic(action_dim = 2).to(self.device)
         self.target_critic_2 = Critic(action_dim = 2).to(self.device)    
         
@@ -55,8 +55,8 @@ class SAC(Agent):
         # Hyperparameters
         self.discount = discount
 
-        # Decaying alpha
-        self.target_entropy = -float(env.action_space.shape[0]) # usually -2.0 for highway-env
+        # Adaptive alpha
+        self.target_entropy = -float(env.action_space.shape[0]) 
         self.log_alpha = torch.tensor([np.log(alpha)], requires_grad=True)
         self.alpha_optimizer = optim.Adam([self.log_alpha], lr=lr)
         self.alpha = self.log_alpha.exp().item() # Initial value
@@ -66,10 +66,10 @@ class SAC(Agent):
         Randomly sample an action as an equation from a state along with its log_prob
         """
 
-        mu, log_std = self.actor(state)                                      # Actor model outputs 
+        mu, log_std = self.actor(state)                                      # Mean and log variance of action distributions from actor 
         std = torch.exp(log_std)                                             # Get normal variance
-        dist = torch.distributions.Normal(mu, std)                           # 2D normal distrubution
-        action_tensor = dist.rsample()                                       # Random sample from distribution
+        dist = torch.distributions.Normal(mu, std)                           # Define normal distrubution
+        action_tensor = dist.rsample()                                       # Random sample from distribution using reparameterisation trick
         action_tensor_scaled = torch.tanh(action_tensor)                     # Rescale between -1 and 1 to match environment logic
 
         # Jacobian correction
@@ -92,58 +92,67 @@ class SAC(Agent):
         batch = random.sample(self.replayBuffer, batch_size)         
         state_batch, action_batch, reward_batch, next_state_batch, done_batch = zip(*batch)
 
-
-        # Updating the critic network
+        # Convert to tensors for operations
         state = torch.FloatTensor(np.array(state_batch)).to(self.device)
         new_state = torch.FloatTensor(np.array(next_state_batch)).to(self.device)
         action = torch.FloatTensor(np.array(action_batch)).to(self.device)
         reward = torch.FloatTensor(np.array(reward_batch)).unsqueeze(1).to(self.device)
         done = torch.FloatTensor(np.array(done_batch)).unsqueeze(1).to(self.device)
 
+        # 1. Updating the critic network
         with torch.no_grad():
             action_new, log_prob = self.predict(new_state)
+
+            # Get smallest Q-value of the new action from both target critics
             Q1_action_value_new = self.target_critic_1(new_state, action_new)
             Q2_action_value_new = self.target_critic_2(new_state, action_new)
             min_action_value_new = torch.min(Q1_action_value_new, Q2_action_value_new)
 
             TD_entropy = reward + self.discount * (1 - done) * (min_action_value_new - self.alpha * log_prob)
 
+        # Get Q_values of actions from critics
         current_q1 = self.critic_1(state, action)
         current_q2 = self.critic_2(state, action)
 
+        # Calculate critic loss
         loss_q1 = F.mse_loss(current_q1, TD_entropy)
         loss_q2 = F.mse_loss(current_q2, TD_entropy)
         critic_loss = loss_q1 + loss_q2
 
+        # Gradient descent
         self.critic_1_optimizer.zero_grad()
         self.critic_2_optimizer.zero_grad()
         critic_loss.backward()
         self.critic_1_optimizer.step()
         self.critic_2_optimizer.step()
 
-        # Updating the actor network
+        # 2. Updating the actor network
 
+        # Freeze critics for speedup and memory
         for p in self.critic_1.parameters(): p.requires_grad = False
         for p in self.critic_2.parameters(): p.requires_grad = False
 
+        # New action
         new_action, log_prob = self.predict(state)
 
-        # Get Q-value of the NEW action
+        # Get smallest Q-value of the new action from both critics
         q1_new = self.critic_1(state, new_action)
         q2_new = self.critic_2(state, new_action)
         min_q_new = torch.min(q1_new, q2_new)
 
-        # Calculate Loss (Flip sign to Maximize)
+        # Calculate Loss
         actor_loss = (self.alpha * log_prob - min_q_new).mean()
 
+        # Gradient descent
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
         self.actor_optimizer.step()
 
+        # Unfreeze critics
         for p in self.critic_1.parameters(): p.requires_grad = True
         for p in self.critic_2.parameters(): p.requires_grad = True
 
-        # Alpha update
+        # 3. Alpha update
         alpha_loss = -(self.log_alpha * (log_prob + self.target_entropy).detach()).mean()
 
         self.alpha_optimizer.zero_grad()
@@ -151,7 +160,7 @@ class SAC(Agent):
         self.alpha_optimizer.step()
         self.alpha = self.log_alpha.exp().item()
 
-        # Updating the target network parameters
+        # 4. Updating the target network parameters
         self.soft_update(self.critic_1, self.target_critic_1)
         self.soft_update(self.critic_2, self.target_critic_2)
 
@@ -191,10 +200,10 @@ class SAC(Agent):
         state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
         
         with torch.no_grad():
-            mu, _ = self.actor(state_tensor)
-            action_tensor = torch.tanh(mu)
+            mu, _ = self.actor(state_tensor)  # Action is defined as the mean as that is the most likely outcome
+            action_tensor = torch.tanh(mu)    # -1 to 1 mapping to match environment
             
-        return action_tensor.cpu().numpy()[0]
+        return action_tensor.cpu().numpy()[0] # Convert action to numpy for environment stepping
     
     def sample_action_numpy(self, state):
         """
@@ -206,13 +215,15 @@ class SAC(Agent):
         with torch.no_grad():
             action_tensor, _ = self.predict(state_tensor)
             
-        return action_tensor.cpu().numpy()[0]
+        return action_tensor.cpu().numpy()[0] # Convert action to numpy for environment stepping
     
 
     def train_loop(self, total_timesteps=10000, batch_size=256):
         """
         MAIN LOOP: Interleaves Data Collection and Training
         """
+
+        # Initialisation
         rewards_history = []
         cl_list = []
         ac_list = []
@@ -225,10 +236,12 @@ class SAC(Agent):
             if (step % 1000) == 0:
                 print(f"Step-milestone: {step}")
             
+            # Add step to buffer
             state, reward, done, truncated = self.collect_data(state)
 
             episode_reward += reward
 
+            # Perform model updates if enough data in buffer
             if len(self.replayBuffer) > batch_size:
                 cl, ac, alpha = self.learn(batch_size)
 
@@ -237,18 +250,21 @@ class SAC(Agent):
                     ac_list.append(ac)
                     alpha_decay.append(alpha)
 
+            # Reset environment is terminal state is reached
             if done or truncated:
                 print(f"Step {step}: Episode Reward: {episode_reward}")
                 rewards_history.append(episode_reward)
                 state, _ = self.env.reset()
                 episode_reward = 0
 
+        # Save model parameters
         self.save_checkpoint("sac_final.pth")
         self.save_actor_only("sac-actor.pth")
 
         return rewards_history, cl_list, ac_list, alpha_decay
     
 
+    # FUNCTIONS TO SAVE MODEL PARAMETERS AND LOAD THEM BACK
 
     def save_checkpoint(self, filename="sac_checkpoint.pth"):
             print(f"Saving checkpoint to {filename}...")
