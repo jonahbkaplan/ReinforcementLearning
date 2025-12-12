@@ -1,3 +1,4 @@
+from pathlib import Path
 import random
 
 import gymnasium
@@ -12,7 +13,7 @@ from collections import deque
 import random
 
 class NStepPriorityReplayBuffer:
-    def __init__(self, capacity, n_step, gamma,beta=0.4,total_training_steps=500):
+    def __init__(self, capacity, n_step, gamma,beta=0.4,total_training_steps=4000):
         self.capacity = capacity
         self.buffer = deque(maxlen=capacity) 
         self.n_step = n_step
@@ -170,16 +171,17 @@ class DistributionalVisualCNN(nn.Module):
 
 
 class RDQN(Agent):
-    def __init__(self, env, type='fully_connected', batch_size=64, gamma=0.9, C=1000, buffer_capacity=10000, n_step=3, zeta=0.95):
+    def __init__(self, env, type='fully_connected', batch_size=64, gamma=0.9, C=1000, buffer_capacity=10000, n_step=3, zeta=0.95,v_min=0,v_max=10):
         super().__init__(env)
+        self.type = type
         self.batch_size = batch_size 
         self.gamma = gamma
         self.n_step = n_step
         self.C = C
         self.zeta = zeta
         
-        self.v_min = 0
-        self.v_max = 8
+        self.v_min = v_min
+        self.v_max = v_max
         self.n_atoms = 51
         self.delta_z = (self.v_max - self.v_min) / (self.n_atoms - 1)
 
@@ -192,10 +194,11 @@ class RDQN(Agent):
         self.action_dim = int(env.unwrapped.action_space.n)
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
-        if type == 'cnn':
+        print(f"Using {self.device}")
+
+        if self.type == 'cnn':
             network = DistributionalVisualCNN
-        elif type == 'fully_connected':
+        elif self.type == 'fully_connected':
             network = DistributionalVisualNetwork
         else:
             raise Exception("Invalid type")
@@ -209,6 +212,27 @@ class RDQN(Agent):
         
         self.optimizer = optim.Adam(self.q_1.parameters(), lr=1e-3, eps=1e-5) # eps is important for Adam stability
         self.counter = 0
+
+    def eval(self):
+        self.q_1.eval()
+        self.q_2.eval()
+
+    def train(self):
+        self.q_1.train()
+        self.q_2.train()
+
+    def save_model(self,name):
+        path = f"models/RDQN/{"CNN" if self.type == "cnn" else "Connected"}"
+        Path(path).mkdir(parents=True, exist_ok=True)
+        torch.save({'q_1':self.q_1.state_dict(),'q_2':self.q_2.state_dict(),'optimizer':self.optimizer.state_dict()},f"{path}/{name}")
+
+    def load_model(self,name):
+        path = f"models/RDQN/{"CNN" if self.type == "cnn" else "Connected"}/{name}"
+        checkpoint = torch.load(path, weights_only=True)
+        self.q_1.load_state_dict(checkpoint['q_1'])
+        self.q_2.load_state_dict(checkpoint['q_2'])
+        self.optimizer.load_state_dict(checkpoint['optimizer'])
+
 
     def predict(self, obs):
         with torch.no_grad():
