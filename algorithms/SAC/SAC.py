@@ -16,7 +16,7 @@ from collections import deque
 class SAC(Agent):
     # Soft Actor-Critic
     # Marcel  
-    def __init__(self, env, discount = 0.95, alpha = 0.2, state_size = 4, lr=0.0003):
+    def __init__(self, env, discount = 0.95, alpha = 0.2, state_size = 105, lr=0.0003):
         """
         SAC Implemention.
 
@@ -218,7 +218,7 @@ class SAC(Agent):
         return action_tensor.cpu().numpy()[0] # Convert action to numpy for environment stepping
     
 
-    def train_loop(self, total_timesteps=10000, batch_size=256):
+    def train_loop(self, total_timesteps=100000, batch_size=256):
         """
         MAIN LOOP: Interleaves Data Collection and Training
         """
@@ -258,8 +258,8 @@ class SAC(Agent):
                 episode_reward = 0
 
         # Save model parameters
-        self.save_checkpoint("sac_final.pth")
-        self.save_actor_only("sac-actor.pth")
+        self.save_checkpoint("models/sac_final_kinematics.pth")
+        self.save_actor_only("models/sac-actor_kinematics.pth")
 
         return rewards_history, cl_list, ac_list, alpha_decay
     
