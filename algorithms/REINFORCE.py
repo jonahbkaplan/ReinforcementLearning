@@ -32,7 +32,7 @@ class Reinforce(Agent):
         elif flags[0]:
             # If using baseline function, initialise value approximator and optimiser
             self.__value_network = ValueNet(np.prod(env.observation_space.shape))
-            self.__value_optimiser = torch.optim.SGD(self.__value_network.parameters(), lr=step_size_w)
+            self.__value_optimiser = torch.optim.Adam(self.__value_network.parameters(), lr=step_size_w)
 
         # Determine the type of action space
         self.__discrete_actions = (type(env.action_space) == spaces.Discrete)
@@ -47,7 +47,7 @@ class Reinforce(Agent):
             # Determine and store the bounds of each action dimension
             self.__lower_bounds, self.__upper_bounds = torch.tensor(env.action_space.low), torch.tensor(env.action_space.high)
         # Initialise policy estimation optimiser
-        self.__policy_optimiser = torch.optim.SGD(self.__policy_network.parameters(), lr=step_size_theta)
+        self.__policy_optimiser = torch.optim.Adam(self.__policy_network.parameters(), lr=step_size_theta)
 
     def __generate_trajectory(self):
         # Initialise empty trajectories and exit flags
@@ -57,6 +57,7 @@ class Reinforce(Agent):
 
         # Until a terminal state is reached
         while not (done or truncated):
+        #while not done:
             # Get next action based on agent's policy, with chance of exploration
             action = self.predict(state, greedy=False)
 
@@ -66,7 +67,6 @@ class Reinforce(Agent):
 
             # Take action and observe environment
             new_state, reward, done, truncated, info = self.env.step(action)
-
             # Add state, action, and reward to trajectories
             states.append(torch.tensor(state.flatten(), dtype=torch.float32))
             actions.append(action)
@@ -75,7 +75,10 @@ class Reinforce(Agent):
             # Update state
             state = new_state
         # Return trajectory
-        return torch.stack(states), torch.tensor(actions), torch.tensor(raw_actions), torch.tensor(rewards)
+        if self.__discrete_actions:
+            return torch.stack(states), torch.tensor(actions), torch.tensor(rewards)
+        else:
+            return torch.stack(states), torch.tensor(actions), torch.stack(raw_actions), torch.tensor(rewards)
 
     def predict(self, obs, greedy=True):
         # Convert the state into a float tensor
@@ -96,6 +99,8 @@ class Reinforce(Agent):
         else:
             # Compute the mean and log standard deviation of each type of action
             means, log_stds = self.__policy_network(tensor)
+            # Clamp for stability
+            log_stds = torch.clamp(log_stds, min=-20, max=2)
             # Convert log stds to regular stds
             stds = log_stds.exp()
             # Return best actions if greedy
@@ -109,11 +114,11 @@ class Reinforce(Agent):
                 # Sample action
                 actions = dists.rsample()
             # Store raw action for gradient ascent
-            self.__raw_action = actions
+            self.__raw_action = actions.detach()
             # Scale actions to [-1,1]
             actions = torch.tanh(actions)
             # Stretch actions to action space (from [-1,1] to [lower,upper])
-            actions = self.__lower_bounds + (actions+1)*0.5*(self.__upper_bounds-self.__lower_bounds)
+            #actions = self.__lower_bounds + (actions+1)*0.5*(self.__upper_bounds-self.__lower_bounds)
             # Take samples of each action dimension from the distributions
             return actions.detach()
 
@@ -124,7 +129,10 @@ class Reinforce(Agent):
         # Training
         for episode in range(self.__episodes):
             # Generate a sample trajectory using the current policy
-            states_tensor, actions_tensor, raw_actions_tensor, rewards_tensor = self.__generate_trajectory()
+            if self.__discrete_actions:
+                states_tensor, actions_tensor, rewards_tensor = self.__generate_trajectory()
+            else:
+                states_tensor, actions_tensor, raw_actions_tensor, rewards_tensor = self.__generate_trajectory()
             # Store the length of this episode's trajectory
             timesteps = rewards_tensor.size(dim=0)
 
@@ -155,12 +163,14 @@ class Reinforce(Agent):
                     log_probability = dist.log_prob(actions_tensor[t])
                 else:
                     means, log_stds = self.__policy_network(states_tensor[t])
+                    # Clamp for stability
+                    log_stds = torch.clamp(log_stds, min=-20, max=2)
                     stds = log_stds.exp()
                     dist = torch.distributions.Normal(means, stds)
                     dist = torch.distributions.Independent(dist, 1)
 
                     # Jacobian correction required due to tanh squashing (non-linear transformation)
-                    log_probability = (dist.log_prob(raw_actions_tensor[t]) - torch.log(1 - torch.tanh(raw_actions_tensor[t]).pow(2) + 1e-6)).sum(-1)
+                    log_probability = (dist.log_prob(raw_actions_tensor[t]) - torch.log(1 - torch.tanh(raw_actions_tensor[t]).pow(2) + 1e-6))
 
                 # Apply loss for gradient ascent
                 theta_loss = -log_probability * r_t_g
@@ -188,9 +198,9 @@ if __name__ == '__main__':
     from matplotlib import pyplot as plt
 
     # Controls:
-    CONTINUOUS_ACTIONS = True
-    TESTING = True
-    EPISODES = 1
+    CONTINUOUS_ACTIONS = False
+    TESTING = False
+    EPISODES = 1500
     BASELINE = True
     ###########
 
