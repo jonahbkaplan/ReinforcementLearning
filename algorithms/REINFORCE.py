@@ -199,7 +199,7 @@ if __name__ == '__main__':
 
     # Controls:
     CONTINUOUS_ACTIONS = False
-    TESTING = False
+    TESTING = True
     EPISODES = 1500
     BASELINE = True
     ###########
@@ -216,7 +216,7 @@ if __name__ == '__main__':
         print("invalid controls, aborting...")
         quit()
 
-    model = Reinforce(env, episodes=EPISODES, flags=[BASELINE])
+    model = Reinforce(env, episodes=EPISODES, step_size_w=1e-3, step_size_theta=3e-4, flags=[BASELINE])
     rs, ars = model.learn(verbose=True)
 
     plt.plot(rs)
