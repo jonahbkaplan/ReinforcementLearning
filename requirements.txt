@@ -3,6 +3,7 @@ gymnasium
 stable-baselines3
 tensorboard
 moviepy
+torchrl
 torch
 matplotlib
 numpy

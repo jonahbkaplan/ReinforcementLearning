@@ -8,7 +8,10 @@ from IPython import display as ipythondisplay
 
 
 def record_videos(env, video_folder="videos"):
-    return RecordVideo(env, video_folder=video_folder, episode_trigger=lambda e: True)
+
+    env =  RecordVideo(env, video_folder=video_folder, episode_trigger=lambda e: True)
+    env.unwrapped.set_record_video_wrapper(env)
+    return env
 
 
 def show_videos(path="videos"):
