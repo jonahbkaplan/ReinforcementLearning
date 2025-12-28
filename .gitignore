@@ -3,3 +3,4 @@ highway_dqn/**
 .idea
 videos/**
 **/__pycache__/**
+runs/**
