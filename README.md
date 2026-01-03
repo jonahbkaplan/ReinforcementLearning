@@ -1,4 +1,4 @@
-Run the following commands to create the environment and install dependencies:
+# Run the following commands to create the environment and install dependencies:
 
 1. Create virtual environment
 ```
@@ -21,7 +21,7 @@ pip install -r requirements.txt
 ```
 
 
-Instruction for how to run each RL algo (all code is located in the algorithms folder):
+# Instruction for how to run each RL algo (all code is located in the algorithms folder):
 
 1 - SAC
 
