@@ -1,21 +1,21 @@
 Run the following commands to create the environment and install dependencies:
 
-# 1. Create virtual environment
+1. Create virtual environment
 ```
 python -m venv venv
 ```
 
-# 2. Activate environment
-# Windows:
+2. Activate environment
+Windows:
 ```
 .\venv\Scripts\activate
 ```
-# Mac/Linux:
+Mac/Linux:
 ```
 source venv/bin/activate
 ```
 
-# 3. Install requirements
+3. Install requirements
 ```
 pip install -r requirements.txt
 ```
