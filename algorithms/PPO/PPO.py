@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
-from algorithms.Agent import Agent
+
 import os
 
 config1 = {
@@ -22,7 +22,7 @@ watch_env = gym.make("highway-v0", render_mode='human', config=config1)
 
 print(train_env.unwrapped.config)
 
-class PPO(Agent):
+class PPO:
   # Neural network for the actor, to produce the probability distribution of actions for a state
   class Actor(nn.Module):
     def __init__(self, observations_dim, n_actions):
@@ -57,7 +57,7 @@ class PPO(Agent):
       return self.critic_value(observations).squeeze(-1)
 
   def __init__(self, env, eval_env=None, watch_env= None):
-    super().__init__(env)
+    self.env = env
     self.env = env
     self.eval_env = eval_env if eval_env is not None else env
     self.watch_env = watch_env if watch_env is not None else env

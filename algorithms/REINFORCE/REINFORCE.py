@@ -1,11 +1,11 @@
-from algorithms.Agent import Agent
-from algorithms.Network import StateValueNN, DiscretePolicyNN, ContinuousPolicyNN
+
+from Network import StateValueNN, DiscretePolicyNN, ContinuousPolicyNN
 from gymnasium import spaces
 import numpy as np
 import torch
 
 
-class Reinforce(Agent):
+class Reinforce:
     def __init__(self, env, epochs=100, episodes_per_epoch=10, discount=0.9, step_size_theta=2**-9, step_size_w=2**-6):
         """
         REINFORCE with optional baseline function.
@@ -17,7 +17,7 @@ class Reinforce(Agent):
         :param Real step_size_theta: Step size for parameter updates (Alpha_Theta)
         :param Real step_size_w: Step size for baseline function updates (Alpha_w)
         """
-        super().__init__(env)
+        self.env = env
         self.__epochs = epochs
         self.__episodes = episodes_per_epoch
         self.__discount = discount

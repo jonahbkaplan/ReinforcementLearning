@@ -4,7 +4,7 @@ sys.path.append(parent)
 
 from Networks import Critic
 from Networks import Actor
-from algorithms.Agent import Agent
+
 import random
 import torch
 from torch.nn import functional as F
@@ -13,7 +13,7 @@ import numpy as np
 from collections import deque
 
 
-class SAC(Agent):
+class SAC:
     # Soft Actor-Critic
     # Marcel  
     def __init__(self, env, discount = 0.95, alpha = 0.2, state_size = 105, lr=0.0003):
@@ -27,7 +27,7 @@ class SAC(Agent):
             state_size (int) -> How many images passed into actor model
             lr         (int) -> learning rate
         """
-        super().__init__(env)
+        self.env = env
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.env = env

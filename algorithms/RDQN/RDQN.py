@@ -3,7 +3,7 @@ import random
 
 import gymnasium
 import torch
-from algorithms.Agent import Agent
+
 import numpy as np
 from torch import nn, optim
 import torch.nn.functional as F
@@ -137,7 +137,7 @@ class DistributionalVisualNetwork(nn.Module):
 
 
 
-class RDQN(Agent):
+class RDQN:
     def __init__(
         self,
         env,
@@ -152,7 +152,7 @@ class RDQN(Agent):
         total_training_steps=1000,
         lambda_=0.8
     ):
-        super().__init__(env)
+        self.env = env
         self.type = type
         self.batch_size = batch_size
         self.gamma = gamma

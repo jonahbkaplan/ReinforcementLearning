@@ -2,7 +2,7 @@ import os, sys
 parent = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.append(parent)
 
-from algorithms.Agent import Agent
+
 
 
 import gymnasium
@@ -104,13 +104,13 @@ class Critic(nn.Module):
         return q1
     
 
-class TD3(Agent):
+class TD3:
     # Twin Delayed DDPG
     # Continuous
     # Finn
     
     def __init__(self, env, gamma=0.99, tau=0.005, policyNoise=0.2, noiseClip=0.5, policyFreq=2):
-        super().__init__(env)
+        self.env = env
         
         self.gamma = gamma
         self.tau = tau
