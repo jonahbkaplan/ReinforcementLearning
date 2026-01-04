@@ -1,14 +1,13 @@
 import gymnasium as gym
 import highway_env
 from matplotlib import pyplot as plt
-from stable_baselines3 import DQN
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
 from algorithms.Agent import Agent
-import os
+
 
 config1 = {
   "observation": {"type": "Kinematics"},
@@ -227,7 +226,7 @@ class PPO(Agent):
 
   # This is another predict function, only this one is greedy, pciking the action with the highest probability.
   def predict_greedily(self, pred_observations):
-      #with torch.no_grad():
+      with torch.no_grad():
         # Flattens actions and converts them to tensors
         flat_observations = self.flatten_observations(pred_observations, update= False)
         tensor_observations = torch.tensor(flat_observations, dtype = torch.float32).unsqueeze(0)
@@ -271,12 +270,13 @@ class PPO(Agent):
       self.actor.eval()
       self.critic.eval()
 
-  def train(self):
+  def train(self, training_length=1000, evaluation_frequency=10, save_model = False, save_location="Arbitrary_model.pt"):
+    print(f"training length: {training_length}")
     rewards_history, returns_history, length_history, crash_rate_history, total_rewards_history, discounted_rewards_history = [], [], [], [], [], []  
     # Evaluate the model using a random policy first
     self.evaluate_random()
     # This is the training loop, where the agent learns for the given training length.
-    for i in range(self.training_length):
+    for i in range(training_length):
       # Collect all necessary data from the trajectories function
       list_observations, actions, rewards, list_ended, log_probabilities, critic_values, last_observation, episode_ended, episode_returns, episode_discounted_returns = self.collect_trajs()
       # Calculate the average for discounted and total returns from the trajectories
@@ -301,45 +301,26 @@ class PPO(Agent):
       advantages_tensor = (advantages_tensor - advantages_tensor.mean()) / (advantages_tensor.std() + 0.00000008)
       total_rewards_history.append(mean_episode_return)
       discounted_rewards_history.append(mean_disc_episode_return)
-      print(
-          f"iter {i}: "
-          f"mean_episode_return={mean_episode_return:.3f}, "
-          f"mean_discounted_episode_return={mean_disc_episode_return:.3f}"
-      )
+      print(f"iteration {i}: Mean episode return = {mean_episode_return:.3f}, Mean discounted episode return = {mean_disc_episode_return:.3f}")
       # Use all these tensors to update the two neural networks
       self.updateNNs(observation_tensor, actions_tensor, prev_log_prob_tensor, returns_tensor, advantages_tensor)
-      print(f"iteration {i}: mean reward = {np.mean(rewards):.3f}")
+      #print(f"iteration {i}: mean reward = {np.mean(rewards):.3f}")
       # Add rewards to reward history to plot at the end.
       rewards_history.append(np.mean(rewards))
       # Run an evaluation function to assess performance every certain number of iterations
-      if (i + 1) % 10 == 0:
+      if (i + 1) % evaluation_frequency == 0:
         average_return, average_length, crash_rate = self.evaluate()
         returns_history.append(average_return)
         length_history.append(average_length)
         crash_rate_history.append(crash_rate)
-
-      if (i + 1) % 5 == 0:
-        self.save()
+      if save_model:
+        self.save(save_location)
         print("model updated!!")
-    # Plot and print values once the training loop has ended:
-    print(rewards_history)
-    print(returns_history)
-    print(length_history)
-    print(crash_rate_history)
-    print(total_rewards_history)
-    print(discounted_rewards_history)
-    plt.plot(rewards_history)
-    plt.show()
-    plt.plot(returns_history)
-    plt.show()
-    plt.plot(length_history)
-    plt.show()
-    plt.plot(crash_rate_history)
-    plt.show()
+    return rewards_history, returns_history, length_history, crash_rate_history, total_rewards_history, discounted_rewards_history
 
   # Assesses the performance of a random policy for comparison to PPO
   def evaluate_random(self, n_episodes=30):
-    returns = []
+    returns = [] 
     # Loops multiple times for accuracy
     for _ in range(n_episodes):
         # new episode
@@ -356,7 +337,8 @@ class PPO(Agent):
             # Add to rewards total
             episode_return += rewards
         returns.append(episode_return)
-    print("Random policy average return:", np.mean(returns))
+    #print("Random policy average return:", np.mean(returns))
+    return returns
 
   # Real evaluation loop
   def evaluate(self, no_episodes=50):
@@ -391,7 +373,7 @@ class PPO(Agent):
       if crashed:
         crashes += 1
     # Find averages and standard deviation:
-    print(returns)
+    #print(returns)
     average_return = np.mean(returns)
     standard_deviation = np.std(returns)
     average_length = np.mean(episode_lengths)
@@ -401,6 +383,7 @@ class PPO(Agent):
        
   # Function that tests and displays the performance of the agent after training
   def test_and_watch(self, n_episodes=50):
+    episode_returns_list = []
     # Once again several episodes to account for outliers
     for episode in range(n_episodes):
         # New environment
@@ -417,19 +400,14 @@ class PPO(Agent):
             # Display performance
             self.watch_env.render()
         print(f"Episode {episode+1} return: {episode_return:.3f}")
+        episode_returns_list.append(episode_return)
+    
+    return np.mean(episode_returns_list)
 
 
-if __name__ == "__main__":
-  # Initialise agent, train it and test it.
-  agent = PPO(train_env, eval_env=eval_env, watch_env=watch_env)
-  #agent.load("newest_model.pt")
-  #agent.actor.train()
-  #agent.critic.train()
 
-  agent.train()
-  for i in range(50):
-    agent.evaluate()
-  agent.test_and_watch(n_episodes = 100)
+
+
 
 
 
