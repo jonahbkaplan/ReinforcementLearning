@@ -4,3 +4,4 @@ highway_dqn/**
 videos/**
 **/__pycache__/**
 runs/**
+audio/
