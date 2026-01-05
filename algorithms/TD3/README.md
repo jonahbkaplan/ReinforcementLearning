@@ -1,0 +1,3 @@
+In this directory you can find the code, results, models, and videos of the TD3 agent using the optimised environment configuration as discussed near the end of the report.
+
+There is an additional directory titled 'basicConfig' which contain the same data and files but for the agent being trained in a less optimised configuration (the same as the SAC agent in order to better evalaute performance between the algorithms). This directoty is laid out the same as the main 'TD3' directory and it is hopefully clear how to navigate to find the necessary information.
