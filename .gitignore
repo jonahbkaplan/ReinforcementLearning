@@ -5,3 +5,4 @@ videos/**
 **/__pycache__/**
 runs/**
 audio/
+video_images/
